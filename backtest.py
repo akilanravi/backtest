@@ -31,8 +31,16 @@ def normalize(data: pd.DataFrame) -> pd.DataFrame:
         d.index = pd.to_datetime(d.index)
     idx = pd.DatetimeIndex(d.index)
     d.index = idx.tz_localize(IST) if idx.tz is None else idx.tz_convert(IST)
-    rename = {'adj close': 'close'}
-    d = d.rename(columns=rename)
+    # Yahoo returns BOTH Close and Adj Close when auto_adjust=False.
+    # Never rename Adj Close to Close: it creates duplicate 'close' columns,
+    # turning d.close into a DataFrame and crashing pandas indicator code.
+    if 'adj close' in d.columns and 'close' not in d.columns:
+        d = d.rename(columns={'adj close': 'close'})
+    if 'adj close' in d.columns:
+        d = d.drop(columns=['adj close'])
+    if d.columns.duplicated().any():
+        duplicates = list(d.columns[d.columns.duplicated()])
+        raise ValueError(f'Duplicate OHLCV fields after normalization: {duplicates}')
     cols = ['open', 'high', 'low', 'close', 'volume']
     if not set(cols).issubset(d.columns):
         raise ValueError(f'Required OHLCV columns missing: {set(cols)-set(d.columns)}')
@@ -373,8 +381,10 @@ def main():
                                                test_return_pct=mv['compounded_pct'],test_drawdown_pct=mv['max_dd_pct']))
                             for t in log:t.update(sector=sector,symbol=symbol,pattern=pattern,filters='+'.join(comb));trades.append(t)
         except Exception as e:
+            import traceback
             coverage.append(dict(sector=sector,symbol=symbol,bars=0,first='',last='',trading_days=0,status='ERROR: '+str(e)[:160]))
             print(symbol, 'FAILED',str(e),flush=True)
+            traceback.print_exc()
     for name,rows in [('coverage',coverage),('combination_screen',screen),('shortlisted_exit_results',detail),('trades',trades)]:
         pd.DataFrame(rows).to_csv(output/(name+'.csv'),index=False)
     if detail:

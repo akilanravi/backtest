@@ -48,3 +48,22 @@ def test_timezone_conversion():
     d=sample().reset_index(names='Datetime')
     normalized=normalize(d)
     assert str(normalized.index.tz)=='Asia/Kolkata'
+
+
+def test_yahoo_close_and_adjclose_columns():
+    d=sample()
+    d['Adj Close']=d['close']*0.95
+    normalized=normalize(d)
+    assert list(normalized.columns)==['open','high','low','close','volume']
+    assert normalized.columns.is_unique
+    assert np.allclose(normalized['close'],d['close'])
+    assert make_features(normalized).shape[0]==len(d)
+
+def test_yahoo_multiindex_columns():
+    d=sample()
+    d['Adj Close']=d['close']*.95
+    d.columns=pd.MultiIndex.from_tuples([(c.upper() if c!='Adj Close' else 'Adj Close','HDFCBANK.NS') for c in d.columns])
+    normalized=normalize(d)
+    assert normalized.columns.is_unique
+    assert normalized.shape[1]==5
+    assert make_features(normalized).shape[0]==len(d)

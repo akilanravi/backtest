@@ -5,6 +5,9 @@ import itertools
 import json
 import math
 import time
+import os
+import requests
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import numpy as np
@@ -53,31 +56,115 @@ def normalize(data: pd.DataFrame) -> pd.DataFrame:
     return d
 
 
-def acquire(symbol: str, source: str, days: int, root: Path) -> pd.DataFrame:
-    cached = pd.DataFrame()
-    file = root / 'data' / '5m' / (symbol + '.csv')
-    if source in ('csv', 'hybrid') and file.exists():
-        try:
-            cached = normalize(pd.read_csv(file))
-        except Exception as e:
-            print(f'{symbol}: invalid input file: {e}')
-    if source == 'csv':
-        return cached
-    remote = pd.DataFrame()
-    try:
-        import yfinance as yf
-        raw = yf.download(symbol + '.NS', period=f'{min(days, 59)}d', interval='5m',
-                          auto_adjust=False, progress=False, threads=False, timeout=20)
-        remote = normalize(raw)
-    except Exception as e:
-        print(f'{symbol}: yahoo download failed: {str(e)[:180]}')
-    if source == 'yahoo':
-        return remote
-    if cached.empty:
-        return remote
-    if remote.empty:
-        return cached
-    return normalize(pd.concat([cached, remote]))
+def dhan_master() -> pd.DataFrame:
+    """Resolve the CURRENT NSE equity security IDs from Dhan's official instrument master."""
+    url = 'https://images.dhan.co/api-data/api-scrip-master.csv'
+    r = requests.get(url, timeout=90)
+    r.raise_for_status()
+    from io import BytesIO
+    df = pd.read_csv(BytesIO(r.content), low_memory=False, dtype=str).fillna('')
+    df.columns = df.columns.str.upper().str.strip()
+    # Dhan compact-master columns, with alternates for an API format change.
+    def field(*candidates):
+        for c in candidates:
+            if c in df.columns: return c
+        raise ValueError(f'Dhan instrument-master missing {candidates}; columns={list(df.columns)[:30]}')
+    exch = field('SEM_EXM_EXCH_ID','EXCH_ID')
+    seg = field('SEM_SEGMENT','SEGMENT')
+    sec = field('SEM_SMST_SECURITY_ID','SECURITY_ID','SEM_SECURITY_ID')
+    sym = field('SEM_TRADING_SYMBOL','SM_SYMBOL_NAME','SYMBOL_NAME','DISPLAY_NAME','SEM_CUSTOM_SYMBOL')
+    instrument = field('SEM_INSTRUMENT_NAME','INSTRUMENT')
+    filtered = df[(df[exch].str.upper()=='NSE') & (df[seg].str.upper()=='E') &
+                  (df[instrument].str.upper().str.contains('EQUITY',na=False))].copy()
+    filtered['resolved_symbol'] = filtered[sym].str.upper().str.strip()
+    filtered['resolved_sid'] = filtered[sec].str.strip()
+    return filtered[filtered.resolved_sid.str.fullmatch(r'\d+')]
+
+
+def dhan_lookup(symbol: str, master: pd.DataFrame) -> str:
+    key=symbol.upper().strip()
+    # Exact match only. Never guess a securityId, even for renamed/delisted companies.
+    hit=master.loc[master.resolved_symbol.eq(key)]
+    if len(hit)==0:
+        raise ValueError(f'SYMBOL_NOT_FOUND_IN_CURRENT_DHAN_NSE_EQ_MASTER: {symbol}')
+    ids=hit.resolved_sid.unique()
+    if len(ids)!=1:
+        raise ValueError(f'AMBIGUOUS_DHAN_ID: {symbol}: {list(ids)}')
+    return str(ids[0])
+
+
+def dhan_parse(payload:dict) -> pd.DataFrame:
+    required=('timestamp','open','high','low','close','volume')
+    if not isinstance(payload,dict): raise ValueError('Non-dict Dhan response')
+    if any(k not in payload for k in required):
+        raise ValueError('Dhan response missing candle fields: '+str(payload)[:450])
+    lengths={len(payload[k]) for k in required}
+    if len(lengths)>1: raise ValueError(f'Unequal Dhan candle-array lengths: {lengths}')
+    if not lengths or next(iter(lengths))==0: return pd.DataFrame()
+    ts=pd.to_datetime(payload['timestamp'],unit='s',utc=True).tz_convert(IST)
+    df=pd.DataFrame({k:payload[k] for k in required if k!='timestamp'}, index=ts)
+    df.index.name='datetime'
+    return normalize(df)
+
+
+def dhan_fetch(symbol:str, sec_id:str, days:int, root:Path) -> pd.DataFrame:
+    token=os.environ.get('DHAN_ACCESS_TOKEN','').strip()
+    client=os.environ.get('DHAN_CLIENT_ID','').strip()
+    if not token: raise RuntimeError('DHAN_ACCESS_TOKEN is missing. Add GitHub Actions secret.')
+    cache_dir=root/'data'/'dhan_cache'; cache_dir.mkdir(parents=True,exist_ok=True)
+    # Exact 90-calendar-day maximum per request; 80 days for safe overlapping boundaries.
+    # The 5 years stated in Dhan docs refers to ACTIVE NSE_EQ symbols only.
+    end=pd.Timestamp.now(tz=IST).normalize()+pd.Timedelta(days=1)
+    start=end-pd.Timedelta(days=days)
+    chunks=[]; current=start
+    sess=requests.Session()
+    headers={'access-token':token,'Accept':'application/json','Content-Type':'application/json'}
+    if client:headers['client-id']=client
+    while current<end:
+        nxt=min(current+pd.Timedelta(days=80),end)
+        key=f'{symbol}_{sec_id}_{current:%Y%m%d}_{nxt:%Y%m%d}.csv'
+        file=cache_dir/key
+        chunk=pd.DataFrame()
+        if file.exists():
+            try:chunk=normalize(pd.read_csv(file))
+            except Exception: file.unlink(missing_ok=True)
+        if chunk.empty:
+            req={'securityId':sec_id,'exchangeSegment':'NSE_EQ','instrument':'EQUITY',
+                 'interval':'5','oi':False,
+                 'fromDate':current.strftime('%Y-%m-%d 00:00:00'),
+                 'toDate':nxt.strftime('%Y-%m-%d 00:00:00')}
+            for attempt in range(5):
+                try:
+                    r=sess.post('https://api.dhan.co/v2/charts/intraday',json=req,headers=headers,timeout=60)
+                    if r.status_code in (401,403):
+                        raise RuntimeError(f'DHAN_AUTH_OR_PLAN_{r.status_code}: '+r.text[:300])
+                    if r.status_code==429 or r.status_code>=500:
+                        if attempt<4: time.sleep(min(30,2**attempt*2));continue
+                    r.raise_for_status()
+                    payload=r.json()
+                    # Dhan errors sometimes arrive as JSON error payloads with HTTP 200.
+                    if isinstance(payload,dict) and ('errorCode' in payload or 'errorType' in payload):
+                        raise RuntimeError('DHAN_API_ERROR: '+str(payload)[:400])
+                    chunk=dhan_parse(payload)
+                    if not chunk.empty:chunk.reset_index().to_csv(file,index=False)
+                    break
+                except (requests.RequestException,ValueError) as exc:
+                    if attempt==4:raise RuntimeError(f'DHAN_DOWNLOAD_FAILED {symbol} {current:%F}-{nxt:%F}: {exc}') from exc
+                    time.sleep(min(30,2**attempt*2))
+            time.sleep(0.15)
+        if not chunk.empty: chunks.append(chunk)
+        current=nxt
+    if not chunks:return pd.DataFrame()
+    return normalize(pd.concat(chunks))
+
+
+def acquire(symbol: str, source: str, days: int, root: Path, security_id: str|None=None) -> pd.DataFrame:
+    if source=='dhan':
+        if not security_id:raise ValueError(f'No Dhan security ID for {symbol}')
+        return dhan_fetch(symbol,security_id,days,root)
+    if source!='csv':raise ValueError('Only Dhan and explicit CSV source supported; Yahoo removed.')
+    file=root/'data'/'5m'/(symbol+'.csv')
+    return normalize(pd.read_csv(file)) if file.exists() else pd.DataFrame()
 
 
 def rma(x: pd.Series, length: int) -> pd.Series:
@@ -328,11 +415,13 @@ def main():
     if args.max_stocks:universe=universe.head(args.max_stocks)
     combos=list(itertools.chain.from_iterable(itertools.combinations(cfg['filters'],n) for n in cfg['combination_sizes']))
     coverage=[];screen=[];detail=[];trades=[]
+    master=dhan_master() if cfg['source']=='dhan' else None
     for j,r in enumerate(universe.itertuples(index=False),1):
         sector,symbol=r.sector,r.symbol
         print(f'[{j}/{len(universe)}] {symbol}',flush=True)
         try:
-            d=acquire(symbol,cfg['source'],cfg['lookback_days'],root)
+            sec_id=dhan_lookup(symbol,master) if master is not None else None
+            d=acquire(symbol,cfg['source'],cfg['lookback_days'],root,sec_id)
             if d.empty or len(d)<220:
                 coverage.append(dict(sector=sector,symbol=symbol,bars=len(d),first='',last='',trading_days=0,status='NO_DATA_OR_TOO_FEW_BARS'))
                 continue

@@ -1,10 +1,33 @@
 {
-  "source": "yahoo",
-  "lookback_days": 59,
-  "base_patterns": ["EARLY", "STRONG", "RETEST", "RTP"],
-  "sides": ["CE", "PE"],
-  "filters": ["CPR", "EMA", "ST10", "RSI", "ADX", "DI", "VWAP", "SR", "SMA_RTP", "SMA200", "VOLUME"],
-  "combination_sizes": [2, 3],
+  "source": "dhan",
+  "lookback_days": 1825,
+  "base_patterns": [
+    "EARLY",
+    "STRONG",
+    "RETEST",
+    "RTP"
+  ],
+  "sides": [
+    "CE",
+    "PE"
+  ],
+  "filters": [
+    "CPR",
+    "EMA",
+    "ST10",
+    "RSI",
+    "ADX",
+    "DI",
+    "VWAP",
+    "SR",
+    "SMA_RTP",
+    "SMA200",
+    "VOLUME"
+  ],
+  "combination_sizes": [
+    2,
+    3
+  ],
   "max_results_per_pattern_per_symbol": 8,
   "exit_mode": "shortlist",
   "minimum_train_trades": 8,

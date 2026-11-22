@@ -1,54 +1,42 @@
-name: CPR combinatorial 5-minute backtest
+name: CPR Dhan 5Y combinatorial research
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '20 12 * * 1-5'
+    inputs:
+      max_stocks:
+        description: '0=all 50 stocks; 3 for quick API smoke test'
+        required: false
+        default: '0'
+  # Manual only: a 5-year scan of 50 stocks is computationally intensive.
 permissions:
   contents: read
 jobs:
-  run:
+  research:
     runs-on: ubuntu-latest
-    timeout-minutes: 340
-    defaults:
-      run:
-        shell: bash
+    timeout-minutes: 350
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: pip
-      - name: Show repository structure
-        run: |
-          pwd
-          ls -la
-          find . -maxdepth 3 -type f | head -70
-      - name: Install requirements
-        run: python -m pip install -r requirements.txt
-      - name: Validate backtest engine (always)
+      - run: python -m pip install -r requirements.txt
+      - name: Check code and unit tests
         run: |
           python -m py_compile backtest.py
-          python - <<'PY'
-          import backtest
-          assert 'ST7' in backtest.EXIT_VARIANTS
-          print('Backtest engine imports correctly; exit variants:', len(backtest.EXIT_VARIANTS))
-          PY
-      - name: Run unit tests if uploaded
+          python -m pytest -q tests/test_engine.py tests/test_dhan.py
+      - name: Download Dhan data and run backtest
+        env:
+          DHAN_CLIENT_ID: ${{ secrets.DHAN_CLIENT_ID }}
+          DHAN_ACCESS_TOKEN: ${{ secrets.DHAN_ACCESS_TOKEN }}
+          MAX_STOCKS: ${{ inputs.max_stocks }}
         run: |
-          if [ -f tests/test_engine.py ]; then
-            python -m pytest -q tests/test_engine.py
-          else
-            echo 'NOTICE: tests/test_engine.py was not uploaded. Engine smoke check passed; continuing to actual backtest.'
-          fi
-      - name: Run real backtest
-        run: python backtest.py --config config.json --universe universe.csv --output results
-      - name: Upload complete CSV results
+          test -n "$DHAN_ACCESS_TOKEN" || (echo 'Missing DHAN_ACCESS_TOKEN secret' && exit 1)
+          python backtest.py --config config.json --universe universe.csv --output results --max-stocks "${MAX_STOCKS:-0}"
+      - name: Upload CSV results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: cpr-combinations-and-trades
+          name: dhan-cpr-5year-results
           path: results/*.csv
           if-no-files-found: warn
           retention-days: 30

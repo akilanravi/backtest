@@ -1,0 +1,20 @@
+{
+  "source": "yahoo",
+  "lookback_days": 59,
+  "base_patterns": ["EARLY", "STRONG", "RETEST", "RTP"],
+  "sides": ["CE", "PE"],
+  "filters": ["CPR", "EMA", "ST10", "RSI", "ADX", "DI", "VWAP", "SR", "SMA_RTP", "SMA200", "VOLUME"],
+  "combination_sizes": [2, 3],
+  "max_results_per_pattern_per_symbol": 8,
+  "exit_mode": "shortlist",
+  "minimum_train_trades": 8,
+  "minimum_test_trades": 3,
+  "risk_stop_pct": 5.0,
+  "reward_target_pct": 15.0,
+  "commission_bps_per_side": 2.0,
+  "slippage_bps_per_side": 2.0,
+  "max_entries_per_day": 2,
+  "entry_start_ist": "09:30",
+  "last_entry_bar_start_ist": "15:00",
+  "square_off_ist": "15:15"
+}

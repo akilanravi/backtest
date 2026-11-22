@@ -1,0 +1,51 @@
+sector,symbol
+Banking,HDFCBANK
+Banking,ICICIBANK
+Banking,SBIN
+Banking,AXISBANK
+Banking,KOTAKBANK
+Information Technology,TCS
+Information Technology,INFY
+Information Technology,HCLTECH
+Information Technology,WIPRO
+Information Technology,TECHM
+Automobiles,MARUTI
+Automobiles,M&M
+Automobiles,TATAMOTORS
+Automobiles,BAJAJ-AUTO
+Automobiles,EICHERMOT
+Pharma,SUNPHARMA
+Pharma,DRREDDY
+Pharma,CIPLA
+Pharma,DIVISLAB
+Pharma,APOLLOHOSP
+FMCG,HINDUNILVR
+FMCG,ITC
+FMCG,NESTLEIND
+FMCG,BRITANNIA
+FMCG,DABUR
+Metals,TATASTEEL
+Metals,JSWSTEEL
+Metals,HINDALCO
+Metals,COALINDIA
+Metals,NATIONALUM
+Energy,RELIANCE
+Energy,ONGC
+Energy,NTPC
+Energy,POWERGRID
+Energy,BPCL
+Industrials,LT
+Industrials,SIEMENS
+Industrials,ABB
+Industrials,BEL
+Industrials,HAL
+Telecom and Services,BHARTIARTL
+Telecom and Services,INDIGO
+Telecom and Services,ADANIPORTS
+Telecom and Services,DLF
+Telecom and Services,TRENT
+Materials and Cement,ULTRACEMCO
+Materials and Cement,GRASIM
+Materials and Cement,SHREECEM
+Materials and Cement,AMBUJACEM
+Materials and Cement,PIDILITIND
